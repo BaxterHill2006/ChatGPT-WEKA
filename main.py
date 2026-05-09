@@ -1,124 +1,114 @@
-import os
-import cv2
+import pickle
 import numpy as np
 
 import weka.core.jvm as jvm
 from weka.core.dataset import Attribute, Instance, Instances
 from weka.classifiers import Classifier, Evaluation
 from weka.core.classes import Random
+import matplotlib.pyplot as plt
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-DATASET_PATH = "dataset"
-IMAGE_SIZE = (64, 64)
+CIFAR_PATH = "cifar-10-batches-py"
 
 # =========================================================
-# IMAGE FEATURE EXTRACTION
+# LOAD CIFAR FILE
 # =========================================================
 
-def extract_features(image_path):
-    """
-    Extract features from an image.
+def load_batch(file_path):
 
-    Current method:
-    - Resize image
-    - Flatten RGB values
+    with open(file_path, 'rb') as f:
+        batch = pickle.load(f, encoding='bytes')
 
-    Replace with:
-    - HOG
-    - SIFT
-    - CNN embeddings
-    - Color histograms
-    """
-    
-    image = cv2.imread(image_path)
+    data = batch[b'data']
+    labels = batch[b'labels']
 
-    if image is None:
-        return None
-
-    image = cv2.resize(image, IMAGE_SIZE)
-
-    # Normalize pixel values
-    image = image / 255.0
-
-    # Flatten into 1D feature vector
-    features = image.flatten()
-
-    return features
+    return data, labels
 
 
 # =========================================================
-# LOAD DATASET
+# LOAD META LABELS
 # =========================================================
 
-def load_dataset(dataset_path):
-    """
-    Loads images and labels from folder structure.
-    """
+def load_label_names():
 
-    X = []
-    y = []
+    with open(f"{CIFAR_PATH}/batches.meta", 'rb') as f:
+        meta = pickle.load(f, encoding='bytes')
 
-    class_names = sorted(os.listdir(dataset_path))
+    labels = [x.decode("utf-8") for x in meta[b'label_names']]
 
-    for class_name in class_names:
-
-        class_folder = os.path.join(dataset_path, class_name)
-
-        if not os.path.isdir(class_folder):
-            continue
-
-        for filename in os.listdir(class_folder):
-
-            image_path = os.path.join(class_folder, filename)
-
-            features = extract_features(image_path)
-
-            if features is not None:
-                X.append(features)
-                y.append(class_name)
-
-    return np.array(X), np.array(y), class_names
+    return labels
 
 
 # =========================================================
-# CONVERT TO WEKA DATASET
+# LOAD ALL TRAINING DATA
+# =========================================================
+
+def load_training_data():
+
+    all_data = []
+    all_labels = []
+
+    for i in range(1, 6):
+
+        data, labels = load_batch(
+            f"{CIFAR_PATH}/data_batch_{i}"
+        )
+
+        all_data.append(data)
+        all_labels.extend(labels)
+
+    X = np.vstack(all_data)
+    y = np.array(all_labels)
+
+    return X, y
+
+
+# =========================================================
+# CREATE WEKA DATASET
 # =========================================================
 
 def create_weka_dataset(X, y, class_names):
-    """
-    Convert NumPy arrays into WEKA Instances.
-    """
 
     attributes = []
 
-    # Numeric feature attributes
-    for i in range(X.shape[1]):
-        attributes.append(Attribute.create_numeric(f"pixel_{i}"))
+    # 3072 pixel features
+    for i in range(3072):
+        attributes.append(
+            Attribute.create_numeric(f"pixel_{i}")
+        )
 
-    # Class attribute
-    class_attr = Attribute.create_nominal("class", class_names)
+    # Class labels
+    class_attr = Attribute.create_nominal(
+        "class",
+        class_names
+    )
+
     attributes.append(class_attr)
 
     dataset = Instances.create_instances(
-        "ImageClassificationDataset",
+        "CIFAR10",
         attributes,
         len(X)
     )
 
     dataset.class_is_last()
 
-    # Add instances
+    # Add data rows
     for features, label in zip(X, y):
+
+        # Normalize pixels
+        features = features / 255.0
 
         values = list(features)
 
         # Append class index
-        values.append(class_names.index(label))
+        values.append(int(label))
 
         inst = Instance.create_instance(values)
+
         dataset.add_instance(inst)
 
     return dataset
@@ -128,10 +118,7 @@ def create_weka_dataset(X, y, class_names):
 # TRAIN MODEL
 # =========================================================
 
-def train_classifier(dataset):
-    """
-    Train WEKA classifier.
-    """
+def train_model(dataset):
 
     classifier = Classifier(
         classname="weka.classifiers.trees.RandomForest"
@@ -143,53 +130,21 @@ def train_classifier(dataset):
 
 
 # =========================================================
-# EVALUATE MODEL
+# EVALUATE
 # =========================================================
 
 def evaluate_model(classifier, dataset):
-    """
-    Evaluate classifier using cross-validation.
-    """
 
     evaluation = Evaluation(dataset)
 
     evaluation.crossvalidate_model(
         classifier,
         dataset,
-        10,
+        5,
         Random(1)
     )
 
-    print("\n=== Evaluation Results ===")
     print(evaluation.summary())
-    print(evaluation.class_details())
-
-
-# =========================================================
-# PREDICT SINGLE IMAGE
-# =========================================================
-
-def predict_image(classifier, image_path, dataset, class_names):
-
-    features = extract_features(image_path)
-
-    if features is None:
-        print("Failed to load image.")
-        return
-
-    values = list(features)
-
-    # Placeholder class value
-    values.append(0)
-
-    inst = Instance.create_instance(values)
-    inst.dataset = dataset
-
-    prediction_index = int(classifier.classify_instance(inst))
-
-    predicted_class = class_names[prediction_index]
-
-    print(f"Prediction: {predicted_class}")
 
 
 # =========================================================
@@ -203,33 +158,31 @@ def main():
 
     try:
 
-        print("Loading dataset...")
-        X, y, class_names = load_dataset(DATASET_PATH)
+        print("Loading labels...")
+        class_names = load_label_names()
 
-        print(f"Loaded {len(X)} images")
-        print(f"Classes: {class_names}")
+        print("Classes:", class_names)
+
+        print("Loading CIFAR data...")
+        X, y = load_training_data()
+
+        print("Dataset shape:", X.shape)
 
         print("Creating WEKA dataset...")
-        dataset = create_weka_dataset(X, y, class_names)
+        dataset = create_weka_dataset(
+            X,
+            y,
+            class_names
+        )
 
-        print("Training classifier...")
-        classifier = train_classifier(dataset)
+        print("Training model...")
+        classifier = train_model(dataset)
 
-        print("Evaluating model...")
+        print("Evaluating...")
         evaluate_model(classifier, dataset)
 
-        # Example prediction
-        test_image = "test.jpg"
-
-        if os.path.exists(test_image):
-            predict_image(
-                classifier,
-                test_image,
-                dataset,
-                class_names
-            )
-
     finally:
+
         print("Stopping JVM...")
         jvm.stop()
 
