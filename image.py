@@ -1,12 +1,3 @@
-import matplotlib.pyplot as plt
-
-def show_image(flat_image, label_name):
-
-    image = flat_image.reshape(3, 32, 32)
-    image = image.transpose(1, 2, 0)
-
-    plt.imshow(image)
-    plt.title(label_name)
-    plt.show()
-
-show_image(X[0], class_names[y[0]])
+version https://git-lfs.github.com/spec/v1
+oid sha256:39120f9b0077990bfc23ece731aec21598f1ba4513c069580448fb4fd3fbbe96
+size 253
