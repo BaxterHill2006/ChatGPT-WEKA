@@ -1,0 +1,3 @@
+pip install python-weka-wrapper3
+
+pip install opencv-python
